@@ -403,6 +403,309 @@ void test_lazy_insert_is_lazy() {
     ASSERT(ls2.Get(5) == 3, "InsertAt(lazy): Get(5)==3");
 }
 
+
+void test_lazy_count_bounds() {
+    cout << "\n-- LazySeq: count as upper limit (min semantics) --\n";
+    int arr[] = {1, 2, 3};
+    LazySequence<int> ls(arr, 3);
+
+    // count > len: не ошибка, просто берём min(count, len)
+    auto m = ls.Map([](const int& x){ return x*2; }, 100);
+    ASSERT(m->GetLength() == Cardinal(3), "Map count>len: clipped to len");
+    ASSERT(m->Get(2) == 6, "Map count>len: correct values");
+    delete m;
+
+    auto w = ls.Where([](const int& x){ return x > 1; }, 100);
+    ASSERT(w->GetLength() == Cardinal(2), "Where count>len: clipped");
+    delete w;
+
+    int s = ls.Reduce(0, [](const int& a, const int& b){ return a+b; }, 100);
+    ASSERT(s == 6, "Reduce count>len: sum==6");
+
+    // count = -1: берём всю длину
+    auto m2 = ls.Map([](const int& x){ return x; }, IGenerator<int>::INF);
+    ASSERT(m2->GetLength() == Cardinal(3), "Map count=INF: full length");
+    delete m2;
+
+    // Для бесконечной count обязателен
+    auto fibRule = [](const Sequence<int>* c) -> int {
+        int n = c->GetLength(); return c->Get(n-1) + c->Get(n-2);
+    };
+    int seeds[] = {0, 1};
+    LazySequence<int> fib(fibRule, seeds, 2);
+    ASSERT_THROW(fib.Map([](const int& x){ return x; }), "Infinite Map count=INF throws");
+    auto mf = fib.Map([](const int& x){ return x; }, 10);
+    ASSERT(mf->GetLength() == Cardinal(10), "Infinite Map count=10: ok");
+    delete mf;
+}
+
+
+void test_ordinal() {
+    cout << "\n-- Ordinal type --\n";
+    Ordinal o0(5);
+    ASSERT(o0.IsFinite(),          "Ordinal(5) is finite");
+    ASSERT(o0.k == 0 && o0.n == 5, "Ordinal(5): k=0, n=5");
+
+    Ordinal o1 = Ordinal::Omega();
+    ASSERT(o1.IsInfinite(),        "Omega is infinite");
+    ASSERT(o1.k == 1 && o1.n == 0, "Omega: k=1, n=0");
+
+    Ordinal o2 = Ordinal::OmegaKPlusN(2, 10);
+    ASSERT(o2.k == 2 && o2.n == 10, "omega*2+10: k=2, n=10");
+
+    ASSERT(Ordinal(3) < Ordinal(5),          "3 < 5");
+    ASSERT(Ordinal(5) < Ordinal::Omega(),    "5 < omega");
+    ASSERT(Ordinal(1,0) < Ordinal(2,0),      "omega < omega*2");
+    ASSERT(Ordinal(1,5) < Ordinal(2,0),      "omega+5 < omega*2");
+    ASSERT(!(Ordinal(1,0) < Ordinal(1,0)),   "omega not < omega");
+}
+
+void test_concat_generator() {
+    cout << "\n-- ConcatGenerator: Get(omega*k + n) --\n";
+
+    // Три бесконечные последовательности
+    auto fibRule = [](const Sequence<int>* c) -> int {
+        int n = c->GetLength(); return c->Get(n-1) + c->Get(n-2);
+    };
+    int fibSeeds[] = {0, 1};
+    LazySequence<int> fib(fibRule, fibSeeds, 2);  // 0,1,1,2,3,5,8...
+
+    int apSeeds[] = {0};
+    auto apRule = [](const Sequence<int>* c) -> int {
+        return c->Get(c->GetLength()-1) + 2;
+    };
+    LazySequence<int> ap(apRule, apSeeds, 1);     // 0,2,4,6,8...
+
+    int natSeeds[] = {0};
+    auto natRule = [](const Sequence<int>* c) -> int {
+        return c->Get(c->GetLength()-1) + 1;
+    };
+    LazySequence<int> nat(natRule, natSeeds, 1);  // 0,1,2,3,4...
+
+    // Цепочка Concat — как в задании
+    fib.Concat(&ap)->Concat(&nat);
+
+    // Get(ω*0 + n) — из fib
+    ASSERT(fib.Get(Ordinal(0, 0)) == 0,  "concat[omega*0+0] == fib[0] == 0");
+    ASSERT(fib.Get(Ordinal(0, 5)) == 5,  "concat[omega*0+5] == fib[5] == 5");
+    ASSERT(fib.Get(Ordinal(0,10)) == 55, "concat[omega*0+10] == fib[10] == 55");
+
+    // Get(ω*1 + n) — из ap
+    ASSERT(fib.Get(Ordinal(1, 0)) == 0,  "concat[omega*1+0] == ap[0] == 0");
+    ASSERT(fib.Get(Ordinal(1, 3)) == 6,  "concat[omega*1+3] == ap[3] == 6");
+
+    // Get(ω*2 + n) — из nat — «десятый элемент третьей последовательности»
+    ASSERT(fib.Get(Ordinal(2, 0))  == 0,  "concat[omega*2+0] == nat[0] == 0");
+    ASSERT(fib.Get(Ordinal(2, 10)) == 10, "concat[omega*2+10] == nat[10] == 10");
+
+    // Обычный Get(int) на конечных всё ещё работает
+    int arr[] = {10, 20, 30};
+    LazySequence<int> ls(arr, 3);
+    ASSERT(ls.Get(0) == 10, "finite Get(0) still works");
+    ASSERT(ls.Get(2) == 30, "finite Get(2) still works");
+    // Concat конечных — по-прежнему через патч
+    LazySequence<int> ls2(arr, 3);
+    int arr2[] = {40, 50};
+    LazySequence<int> ext(arr2, 2);
+    ls2.Concat(&ext);
+    ASSERT(ls2.Get(3) == 40, "finite Concat: Get(3)==40");
+    ASSERT(ls2.GetLength() == Cardinal(5), "finite Concat: length==5");
+}
+
+
+void test_insert_into_infinite() {
+    cout << "\n-- InsertAt into infinite (RuleGenerator) --\n";
+
+    // Фибоначчи: 0,1,1,2,3,5,8,13,21,...
+    auto fibRule = [](const Sequence<int>* c) -> int {
+        int n = c->GetLength(); return c->Get(n-1) + c->Get(n-2);
+    };
+    int seeds[] = {0, 1};
+    LazySequence<int> fib(fibRule, seeds, 2);
+
+    // Вставляем 17 на логическую позицию 7
+    // До: [0,1,1,2,3,5,8,13,21,...]
+    // После: [0,1,1,2,3,5,8, 17, 13,21,...]
+    fib.InsertAt(17, 7);
+
+    ASSERT(fib.Get(0) == 0,  "fib[0] == 0");
+    ASSERT(fib.Get(5) == 5,  "fib[5] == 5");
+    ASSERT(fib.Get(6) == 8,  "fib[6] == 8");
+    ASSERT(fib.Get(7) == 17, "fib[7] == 17 (inserted)");
+    // Правило работает по физическому кэшу — f(8)=13 независимо от вставки
+    ASSERT(fib.Get(8) == 13, "fib[8] == 13 (rule unaffected by insert)");
+    ASSERT(fib.Get(9) == 21, "fib[9] == 21");
+
+    // Prepend в бесконечную
+    LazySequence<int> fib2(fibRule, seeds, 2);
+    fib2.Prepend(99);
+    ASSERT(fib2.Get(0) == 99, "After Prepend: fib2[0] == 99");
+    ASSERT(fib2.Get(1) == 0,  "After Prepend: fib2[1] == fib[0] == 0");
+    ASSERT(fib2.Get(3) == 1,  "After Prepend: fib2[3] == fib[2] == 1");
+}
+
+
+void test_patches_on_infinite() {
+    cout << "\n-- Patches on infinite (RuleGenerator) --\n";
+
+    auto fibRule = [](const Sequence<int>* c) -> int {
+        int n = c->GetLength(); return c->Get(n-1) + c->Get(n-2);
+    };
+    int seeds[] = {0, 1};
+
+    // ---- InsertAt: одиночный элемент ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.InsertAt(17, 7);
+        // [0,1,1,2,3,5,8, 17, 13,21,...]
+        ASSERT(fib.Get(6) == 8,  "InsertAt single: Get(6)==8");
+        ASSERT(fib.Get(7) == 17, "InsertAt single: Get(7)==17");
+        ASSERT(fib.Get(8) == 13, "InsertAt single: Get(8)==13 (rule unaffected)");
+        ASSERT(fib.Get(9) == 21, "InsertAt single: Get(9)==21");
+    }
+
+    // ---- InsertAt: подпоследовательность ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        int ins[] = {100, 200, 300};
+        MutableArraySequence<int> insSeq(ins, 3);
+        fib.InsertAt((Sequence<int>*)&insSeq, 2);
+        // [0,1, 100,200,300, 1,2,3,5,8,...]
+        ASSERT(fib.Get(2) == 100, "InsertAt seq: Get(2)==100");
+        ASSERT(fib.Get(4) == 300, "InsertAt seq: Get(4)==300");
+        ASSERT(fib.Get(5) == 1,   "InsertAt seq: Get(5)==fib[2]==1");
+        ASSERT(fib.Get(7) == 3,   "InsertAt seq: Get(7)==fib[4]==3");
+    }
+
+    // ---- Prepend ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.Prepend(99);
+        // [99, 0,1,1,2,3,5,8,...]
+        ASSERT(fib.Get(0) == 99, "Prepend: Get(0)==99");
+        ASSERT(fib.Get(1) == 0,  "Prepend: Get(1)==fib[0]==0");
+        ASSERT(fib.Get(3) == 1,  "Prepend: Get(3)==fib[2]==1");
+        ASSERT(fib.Get(8) == 13, "Prepend: Get(8)==fib[7]==13");
+    }
+
+    // ---- Append: запрещён для бесконечных ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        ASSERT_THROW(fib.Append(42), "Append to infinite throws");
+    }
+
+    // ---- Remove одного элемента ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.RemoveAt(0);
+        // [1,1,2,3,5,8,13,...]  (убрали fib[0]=0)
+        ASSERT(fib.Get(0) == 1,  "RemoveAt(0): Get(0)==1");
+        ASSERT(fib.Get(1) == 1,  "RemoveAt(0): Get(1)==1");
+        ASSERT(fib.Get(5) == 8,  "RemoveAt(0): Get(5)==8");
+    }
+
+    // ---- Remove диапазона ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.Remove(1, 3);
+        // [0, 3,5,8,13,...] (убрали fib[1]=1, fib[2]=1, fib[3]=2)
+        ASSERT(fib.Get(0) == 0, "Remove(1,3): Get(0)==0");
+        ASSERT(fib.Get(1) == 3, "Remove(1,3): Get(1)==fib[4]==3");
+        ASSERT(fib.Get(2) == 5, "Remove(1,3): Get(2)==fib[5]==5");
+    }
+
+    // ---- Несколько патчей подряд ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.Prepend(99);    // [99, 0,1,1,2,3,5,8,...]
+        fib.InsertAt(42, 3); // [99, 0,1, 42, 1,2,3,5,8,...]
+        fib.RemoveAt(0);     // [0,1, 42, 1,2,3,5,8,...]
+        ASSERT(fib.Get(0) == 0,  "Multi-patch: Get(0)==0");
+        ASSERT(fib.Get(1) == 1,  "Multi-patch: Get(1)==1");
+        ASSERT(fib.Get(2) == 42, "Multi-patch: Get(2)==42");
+        ASSERT(fib.Get(3) == 1,  "Multi-patch: Get(3)==fib[2]==1");
+        ASSERT(fib.Get(6) == 5,  "Multi-patch: Get(6)==fib[5]==5");
+    }
+
+    // ---- Map на бесконечной с патчем ----
+    {
+        LazySequence<int> fib(fibRule, seeds, 2);
+        fib.InsertAt(17, 7);
+        auto m = fib.Map([](const int& x){ return x * 2; }, 10);
+        // [0,2,2,4,6,10,16, 34, 26,42]
+        ASSERT(m->Get(7) == 34, "Map after InsertAt: Get(7)==34");
+        ASSERT(m->Get(8) == 26, "Map after InsertAt: Get(8)==26");
+        delete m;
+    }
+}
+
+
+void test_transfinite_subsequence() {
+    cout << "\n-- GetSubsequence(Ordinal, Ordinal) --\n";
+
+    // fib:  0,1,1,2,3,5,8,13,21,34,55,...
+    // nat:  0,1,2,3,4,5,6,7,8,9,10,...
+    // even: 0,2,4,6,8,10,...
+    auto fibRule = [](const Sequence<int>* c) -> int {
+        int n = c->GetLength(); return c->Get(n-1) + c->Get(n-2);
+    };
+    auto natRule = [](const Sequence<int>* c) -> int {
+        return c->Get(c->GetLength()-1) + 1;
+    };
+    auto evenRule = [](const Sequence<int>* c) -> int {
+        return c->Get(c->GetLength()-1) + 2;
+    };
+
+    int fseeds[] = {0, 1};
+    int nseeds[] = {0};
+    int eseeds[] = {0};
+
+    LazySequence<int> fib(fibRule, fseeds, 2);
+    LazySequence<int> nat(natRule, nseeds, 1);
+    LazySequence<int> even(evenRule, eseeds, 1);
+
+    // Цепочка Concat — унифицированный интерфейс
+    fib.Concat(&nat)->Concat(&even);
+    // fib теперь содержит ConcatGenerator: fib | nat | even
+
+    // ---- Один блок: от ω·0+10 до ω·0+12 → fib[10..12] = [55,89,144] ----
+    {
+        LazySequence<int>* sub1 = fib.GetSubsequence(Ordinal(0,10), Ordinal(0,12));
+        ASSERT(sub1->Get(0) == 55,  "SubSeq same block: Get(0)==fib[10]==55");
+        ASSERT(sub1->Get(1) == 89,  "SubSeq same block: Get(1)==fib[11]==89");
+        ASSERT(sub1->Get(2) == 144, "SubSeq same block: Get(2)==fib[12]==144");
+        ASSERT(sub1->GetLength() == Cardinal(3), "SubSeq same block: length==3");
+        delete sub1;
+    }
+
+    // ---- Два блока: от ω·0+10 до ω·1+9
+    //   fib[10..inf] сначала, потом nat[0..9]
+    //   результат: [55,89,144,...] + [0,1,2,...,9] — бесконечный первый блок!
+    {
+        LazySequence<int>* sub2 = fib.GetSubsequence(Ordinal(0,10), Ordinal(1,9));
+        // Первые элементы — хвост фибоначчи начиная с fib[10]
+        ASSERT(sub2->Get(Ordinal(0,0)) == 55,  "SubSeq 2 blocks: Get(ω·0+0)==fib[10]==55");
+        ASSERT(sub2->Get(Ordinal(0,3)) == 233, "SubSeq 2 blocks: Get(ω·0+3)==fib[13]==233");
+        // Второй блок — nat[0..9]
+        ASSERT(sub2->Get(Ordinal(1,0)) == 0,   "SubSeq 2 blocks: Get(ω·1+0)==nat[0]==0");
+        ASSERT(sub2->Get(Ordinal(1,9)) == 9,   "SubSeq 2 blocks: Get(ω·1+9)==nat[9]==9");
+        delete sub2;
+    }
+
+    // ---- Три блока: от ω·0+5 до ω·2+4
+    //   fib[5..inf], nat[0..inf], even[0..4]
+    {
+        LazySequence<int>* sub3 = fib.GetSubsequence(Ordinal(0,5), Ordinal(2,4));
+        ASSERT(sub3->Get(Ordinal(0,0)) == 5,   "SubSeq 3 blocks: Get(ω·0+0)==fib[5]==5");
+        ASSERT(sub3->Get(Ordinal(0,2)) == 13,  "SubSeq 3 blocks: Get(ω·0+2)==fib[7]==13");
+        ASSERT(sub3->Get(Ordinal(1,0)) == 0,   "SubSeq 3 blocks: Get(ω·1+0)==nat[0]==0");
+        ASSERT(sub3->Get(Ordinal(1,5)) == 5,   "SubSeq 3 blocks: Get(ω·1+5)==nat[5]==5");
+        ASSERT(sub3->Get(Ordinal(2,0)) == 0,   "SubSeq 3 blocks: Get(ω·2+0)==even[0]==0");
+        ASSERT(sub3->Get(Ordinal(2,4)) == 8,   "SubSeq 3 blocks: Get(ω·2+4)==even[4]==8");
+        delete sub3;
+    }
+}
+
 void runAllTests() {
     testsPassed = 0; testsFailed = 0;
     cout << "========== UNIT TESTS ==========\n";
@@ -413,6 +716,12 @@ void runAllTests() {
     test_lazy_constructors_from_sequence();
     test_lazy_subsequence_patches();
     test_lazy_insert_is_lazy();
+    test_lazy_count_bounds();
+    test_ordinal();
+    test_concat_generator();
+    test_insert_into_infinite();
+    test_patches_on_infinite();
+    test_transfinite_subsequence();
     test_ros_from_sequence();
     test_ros_seek();
     test_ros_goback();

@@ -40,6 +40,16 @@ public:
         }    
     }
 
+    DynamicArray<T>& operator=(const DynamicArray<T>& other) {
+        if (this == &other) return *this;
+        delete[] data;
+        data     = new T[other.size];
+        size     = other.size;
+        capacity = other.size;
+        for (int i = 0; i < size; i++) data[i] = other.data[i];
+        return *this;
+    }
+
     ~DynamicArray(){
         delete [] data;
     }

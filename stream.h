@@ -81,17 +81,13 @@ public:
     // ---- Конструкторы ----
 
     // Из Sequence<T> (случайный доступ, Seek, GoBack)
-    explicit ReadOnlyStream(Sequence<T>* seq)
-        : memSource(seq), memLen(seq ? seq->GetLength() : 0) {}
+    explicit ReadOnlyStream(Sequence<T>* seq) : memSource(seq), memLen(seq ? seq->GetLength() : 0) {}
 
     // Из LazySequence<T> (Seek, но не GoBack для бесконечной)
-    explicit ReadOnlyStream(LazySequence<T>* lazy)
-        : lazySource(lazy),
-          memLen(lazy && !lazy->IsInfinite() ? lazy->GetLength().ToInt() : -1) {}
+    explicit ReadOnlyStream(LazySequence<T>* lazy): lazySource(lazy),memLen(lazy && !lazy->IsInfinite() ? lazy->GetLength().ToInt() : -1) {}
 
     // Из файла: каждая строка -> один элемент типа T
-    ReadOnlyStream(const std::string& path, Deserializer deser)
-        : filePath(path), deserializer(deser), fromFile(true) {}
+    ReadOnlyStream(const std::string& path, Deserializer deser) : filePath(path), deserializer(deser), fromFile(true) {}
 
     ~ReadOnlyStream() {
         if (fileStream.is_open()) fileStream.close();
@@ -119,11 +115,8 @@ public:
 
     bool IsEndOfStream() const {
         if (!isOpen) return true;
-        if (fromFile)       return !const_cast<std::ifstream&>(fileStream).good()
-                                || const_cast<std::ifstream&>(fileStream).peek() == EOF;
-        if (lazySource)     return lazySource->IsInfinite()
-                                ? false
-                                : (int)position >= lazySource->GetLength().ToInt();
+        if (fromFile)       return !const_cast<std::ifstream&>(fileStream).good() || const_cast<std::ifstream&>(fileStream).peek() == EOF;
+        if (lazySource)     return lazySource->IsInfinite()? false : (int)position >= lazySource->GetLength().ToInt();
         return (int)position >= memLen;
     }
 

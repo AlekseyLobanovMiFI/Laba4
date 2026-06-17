@@ -7,9 +7,6 @@ template<class T> class MutableArraySequence : public ArraySequence<T>{
 private:
 
 public:
-    T& operator[](int index){return ArraySequence<T>::operator[](index);}
-    const T& operator[](int index) const{return ArraySequence<T>::operator[](index);}
-
     virtual MutableArraySequence<T>* Instance() override { 
         return this; 
     }
@@ -21,6 +18,8 @@ public:
     virtual Sequence<T>* NewEmpty() const override {
         return new MutableArraySequence<T>();
     }
+
+    T& operator[](int index) { return ArraySequence<T>::operator[](index); }
 
     MutableArraySequence (const T* items, int count) : ArraySequence<T>(items, count){};
     MutableArraySequence () : ArraySequence<T>(){};
